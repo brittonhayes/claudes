@@ -12,10 +12,18 @@ Install directly to `~/.local/bin` without cloning:
 curl -fsSL https://raw.githubusercontent.com/brittonhayes/claude-conductor/main/install.sh | bash
 ```
 
-Then use it anywhere:
+The installer will check if `~/.local/bin` is in your PATH and provide instructions if needed.
+
+Once installed, use it from anywhere:
 
 ```bash
 claude-conductor -h
+```
+
+Or use the full path if you haven't added `~/.local/bin` to your PATH:
+
+```bash
+~/.local/bin/claude-conductor -h
 ```
 
 ### Manual Install
