@@ -1,0 +1,114 @@
+#!/usr/bin/env bash
+# Launch Claude Code orchestration with tmux
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+NUM_WORKERS=3
+SESSION_NAME="conductor"
+USE_WORKTREES=false
+BASE_DIR="$HOME/conductor-work"
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    -w|--workers) NUM_WORKERS="$2"; shift 2 ;;
+    -n|--name) SESSION_NAME="$2"; shift 2 ;;
+    --worktrees) USE_WORKTREES=true; shift ;;
+    -d|--dir) BASE_DIR="$2"; shift 2 ;;
+    -h|--help)
+      cat <<EOF
+Usage: $0 [options]
+
+Options:
+  -w, --workers NUM   Number of workers (default: 3)
+  -n, --name NAME     Session name (default: conductor)
+  --worktrees         Use git worktrees
+  -d, --dir DIR       Base directory (default: ~/conductor-work)
+  -h, --help          Show help
+EOF
+      exit 0
+      ;;
+    *) echo "Unknown option: $1" >&2; exit 1 ;;
+  esac
+done
+
+command -v tmux >/dev/null 2>&1 || {
+  echo "Error: tmux not installed" >&2
+  exit 1
+}
+
+tmux has-session -t "$SESSION_NAME" 2>/dev/null && {
+  echo "Session '$SESSION_NAME' exists" >&2
+  echo "Attach: tmux attach -t $SESSION_NAME" >&2
+  exit 1
+}
+
+setup_worktrees() {
+  git rev-parse --git-dir >/dev/null 2>&1 || {
+    echo "Error: --worktrees requires git repository" >&2
+    exit 1
+  }
+
+  local branch=$(git rev-parse --abbrev-ref HEAD)
+  mkdir -p "$BASE_DIR"
+
+  for i in $(seq 0 $((NUM_WORKERS - 1))); do
+    local wdir="$BASE_DIR/worker-$i"
+    [ -d "$wdir" ] || {
+      echo "Creating worktree: $wdir"
+      git worktree add "$wdir" "$branch" 2>/dev/null || true
+    }
+  done
+}
+
+get_worker_dir() {
+  if [ "$USE_WORKTREES" = true ]; then
+    echo "$BASE_DIR/worker-$1"
+  else
+    echo "$PWD"
+  fi
+}
+
+[ "$USE_WORKTREES" = true ] && setup_worktrees
+
+echo "Creating session: $SESSION_NAME (workers: $NUM_WORKERS)"
+
+tmux new-session -d -s "$SESSION_NAME" -n "conductor"
+
+# Layout based on worker count
+case $NUM_WORKERS in
+  1) tmux split-window -h -t "$SESSION_NAME:0" ;;
+  2) tmux split-window -h -t "$SESSION_NAME:0"
+     tmux split-window -h -t "$SESSION_NAME:0" ;;
+  3) tmux split-window -h -t "$SESSION_NAME:0"
+     tmux split-window -v -t "$SESSION_NAME:0.1"
+     tmux split-window -v -t "$SESSION_NAME:0.2" ;;
+  *) tmux split-window -h -t "$SESSION_NAME:0"
+     for i in $(seq 1 $((NUM_WORKERS - 1))); do
+       tmux split-window -v -t "$SESSION_NAME:0.$i"
+     done
+     tmux select-layout -t "$SESSION_NAME:0" tiled ;;
+esac
+
+# Start workers
+for i in $(seq 0 $((NUM_WORKERS - 1))); do
+  local pane=$((i + 1))
+  local wdir=$(get_worker_dir $i)
+  tmux send-keys -t "$SESSION_NAME:0.$pane" "cd '$wdir'" C-m
+  tmux send-keys -t "$SESSION_NAME:0.$pane" "'$SCRIPT_DIR/worker' $i '$wdir'" C-m
+done
+
+# Start orchestrator
+tmux send-keys -t "$SESSION_NAME:0.0" "cd '$PWD'" C-m
+tmux send-keys -t "$SESSION_NAME:0.0" "sleep 1 && '$SCRIPT_DIR/orchestrator' $NUM_WORKERS" C-m
+
+tmux select-pane -t "$SESSION_NAME:0.0"
+
+echo "✓ Session created"
+echo ""
+echo "Attach: tmux attach -t $SESSION_NAME"
+echo "Detach: Ctrl-b d"
+echo "Kill: tmux kill-session -t $SESSION_NAME"
+
+[ -t 0 ] && { sleep 1; exec tmux attach -t "$SESSION_NAME"; }

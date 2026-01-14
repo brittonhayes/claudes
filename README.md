@@ -1,538 +1,227 @@
 # Claude Conductor
 
-> Filesystem-based orchestration system for Claude Code - one parent session coordinating multiple worker sessions
+Filesystem-based orchestration for Claude Code. One parent session coordinates multiple worker sessions.
 
-## Design Philosophy
+## Design
 
-**Mechanism, not policy. Do one thing well. Make it obvious how it works.**
+**Do one thing well: distribute work across Claude Code sessions via filesystem-based task queues.**
 
-Claude Conductor enables parallel work distribution across multiple Claude Code sessions using nothing but text files and Unix tools. No databases, no message queues, no complex state machines - just filesystem operations and simple shell scripts.
+```
+Parent Session
+      ↓
+~/.claude-code/orchestrator/workers/
+      ↓
+Worker Sessions
+```
+
+No databases. No message queues. Just text files.
 
 ## How It Works
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    Orchestrator Session                     │
-│         (Decomposes goals → Assigns tasks)                  │
-└─────────────────┬───────────────┬───────────────┬───────────┘
-                  │               │               │
-                  ▼               ▼               ▼
-         ~/.claude-code/orchestrator/workers/
-                  │               │               │
-         ┌────────┴────────┬──────┴──────┬────────┴────────┐
-         │                 │             │                 │
-    ┌────▼─────┐      ┌────▼─────┐ ┌────▼─────┐      ┌────▼─────┐
-    │ Worker 0 │      │ Worker 1 │ │ Worker 2 │ ...  │ Worker N │
-    │  (idle)  │      │(working) │ │  (done)  │      │ (error)  │
-    └──────────┘      └──────────┘ └──────────┘      └──────────┘
-```
-
-### Task Queue Structure
-
+**Queue structure:**
 ```
 ~/.claude-code/orchestrator/workers/
 ├── 0/
-│   ├── task.json      # Pending work
-│   ├── status.json    # Current state (idle/working/done/error)
-│   ├── result.json    # Completed output
-│   └── .lock/         # Simple mutex with PID
+│   ├── task.json      # Work to do
+│   ├── status.json    # idle|working|done|error
+│   ├── result.json    # Output
+│   └── .lock/         # Mutex with PID
 ├── 1/
-│   ├── task.json
-│   ├── status.json
-│   ├── result.json
-│   └── .lock/
 └── 2/
-    ├── task.json
-    ├── status.json
-    ├── result.json
-    └── .lock/
 ```
 
-## Components
+**Components:**
 
-### 1. Task Queue (`lib/queue.js`)
+1. **Orchestrator** (`bin/orchestrator`) - Assigns tasks, polls status, aggregates results
+2. **Worker** (`bin/worker`) - Watches for tasks, executes them, writes results
+3. **Queue** (`conductor/queue.py`) - Read/write task files
+4. **Launcher** (`bin/launch`) - Creates tmux session with orchestrator + workers
 
-Simple Node.js library for reading/writing task files:
+## Usage
 
-```javascript
-import { writeTask, readStatus, readResult, waitForStatus } from './lib/queue.js';
-
-// Assign a task
-writeTask(workerId, {
-  prompt: "Review auth.js for security issues",
-  context: { file: "src/auth.js" }
-});
-
-// Check status
-const status = readStatus(workerId);  // { status: 'working', timestamp: '...' }
-
-// Wait for completion
-await waitForStatus(workerId, 'done');
-
-// Get result
-const result = readResult(workerId);  // { output: '...', success: true }
-```
-
-### 2. Worker Script (`bin/worker.sh`)
-
-Daemon that watches for tasks and executes them:
+### Launch with tmux
 
 ```bash
-./bin/worker.sh <worker_id> [worktree_path]
+./bin/launch --workers 3
 ```
 
-- Uses `inotify` (Linux) or `fswatch` (macOS) for efficient file watching
-- Acquires lock before processing
-- Pipes task prompt to Claude Code stdin
-- Writes result and updates status
-- Handles stale locks automatically (checks PID)
-
-### 3. Orchestrator (`bin/orchestrator.js`)
-
-Coordinates work distribution:
-
-```javascript
-import { Orchestrator } from './bin/orchestrator.js';
-
-const orch = new Orchestrator(3);  // 3 workers
-
-// Parallel execution
-const results = await orch.executeTasks([
-  { prompt: "Review file A" },
-  { prompt: "Review file B" },
-  { prompt: "Review file C" }
-]);
-
-// Sequential execution (with dependencies)
-const results = await orch.executeSequential([
-  { prompt: "Build the project", stopOnError: true },
-  { prompt: "Run tests", stopOnError: true },
-  { prompt: "Deploy to staging" }
-]);
+Creates:
+```
+┌─────────────────┬─────────────────┐
+│  Orchestrator   │   Worker 0      │
+├─────────────────┼─────────────────┤
+│   Worker 1      │   Worker 2      │
+└─────────────────┴─────────────────┘
 ```
 
-### 4. Launcher (`bin/launch.sh`)
+In orchestrator pane, use Claude Code normally:
+```
+"Review all .js files in src/ for security issues across the workers"
+```
 
-Creates tmux session with orchestrator + workers:
+### Programmatic
+
+```python
+from conductor.queue import Orchestrator
+
+orch = Orchestrator(3)
+
+# Parallel
+results = orch.execute_tasks([
+    {'prompt': 'Review auth.py'},
+    {'prompt': 'Review db.py'},
+    {'prompt': 'Review api.py'}
+])
+
+# Sequential
+results = orch.execute_sequential([
+    {'prompt': 'Build project', 'stopOnError': True},
+    {'prompt': 'Run tests', 'stopOnError': True},
+    {'prompt': 'Deploy'}
+])
+
+orch.shutdown()
+```
+
+### Manual
 
 ```bash
-./bin/launch.sh --workers 3 --worktrees
+# Terminal 1-3: Start workers
+./bin/worker 0 .
+./bin/worker 1 .
+./bin/worker 2 .
+
+# Terminal 4: Orchestrator
+./bin/orchestrator 3
 ```
 
-**Tmux Layout:**
+## Options
 
-```
-┌─────────────────────────────────┬──────────────────────────────────┐
-│                                 │                                  │
-│        Orchestrator             │          Worker 0                │
-│      (Interactive)              │                                  │
-│                                 │                                  │
-├─────────────────────────────────┼──────────────────────────────────┤
-│                                 │                                  │
-│         Worker 1                │          Worker 2                │
-│                                 │                                  │
-│                                 │                                  │
-└─────────────────────────────────┴──────────────────────────────────┘
+**Launcher:**
+```bash
+./bin/launch [options]
+
+-w, --workers NUM   Number of workers (default: 3)
+-n, --name NAME     Session name (default: conductor)
+--worktrees         Use git worktrees (isolated copies)
+-d, --dir DIR       Base directory (default: ~/conductor-work)
 ```
 
-## Quick Start
+**With worktrees:**
+```bash
+./bin/launch --workers 3 --worktrees
+```
 
-### Installation
+Each worker gets its own git worktree. Perfect for parallel changes without conflicts.
+
+## Requirements
+
+**Essential:**
+- Python 3.6+
+- Bash
+- `jq` (JSON parsing in bash)
+
+**Optional (for file watching):**
+- `inotify-tools` (Linux) - instant task pickup
+- `fswatch` (macOS) - instant task pickup
+
+Without file watching tools, workers poll every second (slower but functional).
+
+## Install
 
 ```bash
-npm install -g claude-conductor
+# Linux
+sudo apt-get install jq inotify-tools
 
-# Or from source
-git clone <repo>
-cd claude-conductor
-npm link
+# macOS
+brew install jq fswatch
 ```
 
-### Basic Usage
+## Examples
 
-**1. Launch the system:**
+**Parallel code review:**
+```python
+from pathlib import Path
+from conductor.queue import Orchestrator
 
+orch = Orchestrator(3)
+
+files = list(Path('src').rglob('*.py'))
+tasks = [{'prompt': f'Review {f} for bugs'} for f in files]
+
+results = orch.execute_tasks(tasks)
+
+for r in results:
+    print(f"{r['task']['prompt']}: {r['result']['output']}")
+
+orch.shutdown()
+```
+
+**Parallel testing:**
+```python
+orch = Orchestrator(4)
+
+suites = ['unit', 'integration', 'e2e', 'performance']
+tasks = [{'prompt': f'Run {s} tests'} for s in suites]
+
+results = orch.execute_tasks(tasks)
+orch.shutdown()
+```
+
+**Sequential pipeline:**
+```python
+orch = Orchestrator(3)
+
+orch.execute_sequential([
+    {'prompt': 'npm install', 'stopOnError': True},
+    {'prompt': 'npm run build', 'stopOnError': True},
+    {'prompt': 'npm test', 'stopOnError': True}
+])
+
+orch.shutdown()
+```
+
+## Debugging
+
+**Check queue:**
 ```bash
-# Simple - 3 workers in current directory
-conductor-launch
-
-# With worktrees (recommended for code changes)
-conductor-launch --workers 4 --worktrees
-
-# Custom configuration
-conductor-launch --workers 5 --name my-session --dir ~/projects/myapp
+ls -la ~/.claude-code/orchestrator/workers/0/
 ```
 
-**2. In the orchestrator pane, use Claude Code normally:**
-
-```
-I need to review all files in src/ for security issues. Can you distribute
-this work across the available workers?
-```
-
-**3. Claude Code (in orchestrator mode) will:**
-- Decompose the task into subtasks
-- Assign to workers via task files
-- Poll for completion
-- Aggregate and present results
-
-### Manual Usage (without tmux)
-
-**Start workers manually:**
-
-```bash
-# Terminal 1
-./bin/worker.sh 0 ~/project
-
-# Terminal 2
-./bin/worker.sh 1 ~/project
-
-# Terminal 3
-./bin/worker.sh 2 ~/project
-```
-
-**Use the orchestrator programmatically:**
-
-```javascript
-import { Orchestrator } from 'claude-conductor';
-
-const orch = new Orchestrator(3);
-
-// Parallel code review
-const files = ['auth.js', 'db.js', 'api.js'];
-const tasks = files.map(f => ({
-  prompt: `Review ${f} for bugs and security issues`
-}));
-
-const results = await orch.executeTasks(tasks);
-
-for (const r of results) {
-  console.log(`Worker ${r.workerId}: ${r.result.output}`);
-}
-
-orch.shutdown();
-```
-
-## Use Cases
-
-### Parallel Code Review
-
-```javascript
-const files = await glob('src/**/*.js');
-const tasks = files.map(file => ({
-  prompt: `Review ${file} for:
-    - Security vulnerabilities
-    - Bug risks
-    - Code style issues
-    Provide concise summary.`,
-  context: { file }
-}));
-
-await orchestrator.executeTasks(tasks);
-```
-
-### Parallel Testing
-
-```javascript
-const suites = ['auth', 'api', 'db', 'utils'];
-const tasks = suites.map(suite => ({
-  prompt: `Run tests for ${suite} module and report results`,
-  context: { suite }
-}));
-
-await orchestrator.executeTasks(tasks);
-```
-
-### Sequential Pipeline
-
-```javascript
-await orchestrator.executeSequential([
-  { prompt: "Install dependencies", stopOnError: true },
-  { prompt: "Build the project", stopOnError: true },
-  { prompt: "Run all tests", stopOnError: true },
-  { prompt: "Generate documentation", stopOnError: false }
-]);
-```
-
-### Decomposed Feature Implementation
-
-```javascript
-// Claude Code in orchestrator mode would intelligently decompose this
-const goal = "Add user authentication with OAuth support";
-
-// Example decomposition (done by Claude Code)
-await orchestrator.executeSequential([
-  { prompt: "Create database schema for users and sessions" },
-  { prompt: "Implement OAuth flow handlers" },
-  { prompt: "Add authentication middleware" },
-  { prompt: "Write tests for auth system" },
-  { prompt: "Update API documentation" }
-]);
-```
-
-## Advanced Usage
-
-### Custom Worktrees
-
-Use git worktrees to give each worker an isolated copy:
-
-```bash
-# Launcher handles this automatically
-conductor-launch --worktrees
-
-# Or manually
-git worktree add ~/claude-work/worker-0 main
-git worktree add ~/claude-work/worker-1 main
-git worktree add ~/claude-work/worker-2 main
-
-# Start workers in their worktrees
-./bin/worker.sh 0 ~/claude-work/worker-0
-./bin/worker.sh 1 ~/claude-work/worker-1
-./bin/worker.sh 2 ~/claude-work/worker-2
-```
-
-### Task Context
-
-Pass additional context to tasks:
-
-```javascript
-writeTask(workerId, {
-  prompt: "Fix the bug in the authentication flow",
-  context: {
-    bugId: 123,
-    priority: "high",
-    relatedFiles: ["auth.js", "session.js"],
-    errorLog: "..."
-  }
-});
-```
-
-Workers receive this context and can use it in their work.
-
-### Monitoring
-
-Check worker status anytime:
-
-```bash
-# Using Node.js
-node -e "
-  import('./lib/queue.js').then(q => {
-    for (const id of q.listWorkers()) {
-      console.log(\`Worker \${id}: \${q.readStatus(id).status}\`);
-    }
-  });
-"
-
-# Or use orchestrator
-./bin/orchestrator.js 3
-```
-
-### Lock Management
-
-Locks contain PIDs for automatic stale lock cleanup:
-
-```javascript
-if (acquireLock(workerId)) {
-  // Do work
-  releaseLock(workerId);
-}
-// If lock is held by dead process, it's automatically removed
-```
-
-## Design Decisions
-
-### Why filesystem-based?
-
-1. **Transparent**: `cat ~/.claude-code/orchestrator/workers/0/task.json` shows exactly what's happening
-2. **Debuggable**: No hidden state, everything is a text file
-3. **Simple**: No additional services, daemons, or databases
-4. **Reliable**: Filesystem atomicity guarantees
-5. **Scriptable**: Any language can read/write JSON files
-
-### Why not use a proper message queue?
-
-We're coordinating 3-5 Claude Code sessions, not a distributed system. Complexity is the enemy. A few JSON files and inotify are plenty.
-
-### Why locks instead of atomic file operations?
-
-Lock files with PIDs enable:
-- Stale lock detection (check if PID exists)
-- Debugging (see which worker has the lock)
-- Clean recovery (remove locks from dead processes)
-
-### Why tmux instead of a custom UI?
-
-- Already installed on most dev systems
-- Scriptable and automatable
-- Users can attach/detach freely
-- No dependencies, no frameworks
-- Works over SSH
-
-## Troubleshooting
-
-### Workers not picking up tasks
-
-**Check if worker is running:**
-```bash
-ps aux | grep worker.sh
-```
-
-**Check worker status:**
+**View status:**
 ```bash
 cat ~/.claude-code/orchestrator/workers/0/status.json
 ```
 
-**Check for stuck locks:**
-```bash
-ls -la ~/.claude-code/orchestrator/workers/*/\.lock
-# Remove stale locks manually if needed
-```
-
-### Task files not being watched
-
-**Install inotify-tools (Linux) or fswatch (macOS):**
-```bash
-# Linux
-apt-get install inotify-tools
-
-# macOS
-brew install fswatch
-```
-
-**Workers fall back to polling without these tools (slower but functional).**
-
-### Orchestrator can't find workers
-
-**Ensure workers are initialized:**
-```bash
-./bin/orchestrator.js 3  # Creates worker directories
-```
-
-**Check queue directory:**
-```bash
-ls -la ~/.claude-code/orchestrator/workers/
-```
-
-### Results not appearing
-
-**Check result file:**
+**View result:**
 ```bash
 cat ~/.claude-code/orchestrator/workers/0/result.json
 ```
 
-**Check worker logs:**
-Workers log to stderr - check your terminal or redirect to a file:
+**Check locks:**
 ```bash
-./bin/worker.sh 0 ~/project 2>worker-0.log
+cat ~/.claude-code/orchestrator/workers/0/.lock/pid
+ps -p $(cat ~/.claude-code/orchestrator/workers/0/.lock/pid)
 ```
 
-## Architecture
-
-### State Machine
-
-Workers follow a simple state machine:
-
-```
-     ┌──────┐
-     │ idle │←─────────────┐
-     └──┬───┘              │
-        │                  │
-   task.json created       │
-        │                  │
-        ▼                  │
-   ┌─────────┐             │
-   │ working │             │
-   └────┬────┘             │
-        │                  │
-   success/error           │
-        │                  │
-        ▼                  │
-   ┌────────┐    result    │
-   │  done  │─────read─────┤
-   └────────┘              │
-        │                  │
-   ┌────────┐              │
-   │ error  │──────────────┘
-   └────────┘
+**Reset:**
+```bash
+pkill -f "bin/worker"
+rm -rf ~/.claude-code/orchestrator/workers/*
+./bin/orchestrator 3
 ```
 
-### File Formats
+## Philosophy
 
-**task.json:**
-```json
-{
-  "id": 1705234567890,
-  "prompt": "Review auth.js for security issues",
-  "context": {
-    "file": "src/auth.js",
-    "priority": "high"
-  },
-  "timestamp": "2024-01-14T12:34:56.789Z"
-}
-```
+> "Do one thing and do it well" - Rob Pike
 
-**status.json:**
-```json
-{
-  "status": "working",
-  "taskId": 1705234567890,
-  "timestamp": "2024-01-14T12:35:00.123Z"
-}
-```
+Claude Conductor distributes work. That's it.
 
-**result.json:**
-```json
-{
-  "taskId": 1705234567890,
-  "output": "Review complete. Found 2 issues:\n1. SQL injection risk...\n2. Missing input validation...",
-  "success": true,
-  "error": null,
-  "timestamp": "2024-01-14T12:36:45.678Z"
-}
-```
-
-**.lock/pid:**
-```
-12345
-```
-
-## API Reference
-
-See [lib/queue.js](lib/queue.js) for the complete API.
-
-**Core functions:**
-- `initQueue()` - Initialize queue directory
-- `createWorker(id)` - Create worker slot
-- `writeTask(id, task)` - Assign task
-- `readStatus(id)` - Get worker status
-- `readResult(id)` - Get task result
-- `waitForStatus(id, status, timeout)` - Wait for state change
-- `acquireLock(id)` - Acquire worker lock
-- `releaseLock(id)` - Release worker lock
-
-## Examples
-
-See [examples/](examples/) for complete examples:
-- `orchestrator-helper.js` - High-level helper functions for common patterns
-
-## Contributing
-
-This is a Unix-philosophy tool: simple, focused, composable.
-
-When contributing:
-- Keep it simple (no frameworks, no abstraction layers)
-- Keep it transparent (everything should be inspectable)
-- Keep it scriptable (text files and simple APIs)
-- Make it obvious (prefer explicit over clever)
+- **No frameworks** - Python stdlib + bash
+- **No config files** - Sensible defaults, override with flags
+- **No abstraction** - Everything is a text file you can `cat`
+- **No magic** - Simple, obvious, debuggable
 
 ## License
 
 MIT
-
-## Philosophy
-
-> "Make each program do one thing well. To do a new job, build afresh rather than complicate old programs by adding new features."
->
-> — Doug McIlroy, Unix Philosophy
-
-Claude Conductor does one thing: coordinate Claude Code sessions via filesystem-based task queues. Nothing more, nothing less.
