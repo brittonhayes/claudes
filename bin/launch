@@ -18,7 +18,7 @@ Usage: $(basename "$0") [options] "task1" "task2" ...
 Launch N Claude CLI sessions in tmux, one per task.
 
 Options:
-  -f FILE         Read tasks from file (blank-line delimited for multiline)
+  -f FILE         Read tasks from file (double-blank-line delimited)
   -n NAME         Session name (default: conductor)
   -w              Use git worktrees (isolate changes per task)
   -d DIR          Work directory for worktrees (default: ~/.conductor-work)
@@ -26,8 +26,8 @@ Options:
 
 Task Input:
   - Command line args: each argument is a task
-  - File (-f): tasks separated by blank lines (allows multiline)
-  - Stdin (-f -): tasks separated by blank lines
+  - File (-f): tasks separated by TWO+ blank lines (allows multiline with single blanks)
+  - Stdin (-f -): tasks separated by TWO+ blank lines
 
 Examples:
   launch "Review auth.py" "Run tests" "Fix bug #123"
@@ -59,9 +59,10 @@ if [ -n "${TASK_FILE:-}" ]; then
     INPUT=$(cat "$TASK_FILE")
   fi
 
-  # Split by blank lines using awk paragraph mode (RS="")
+  # Split by double-newlines (two+ blank lines) using awk
+  # This allows single blank lines within a task
   # Output null-delimited for safe parsing (handles multiline tasks)
-  mapfile -d '' -t TASKS < <(echo "$INPUT" | awk 'BEGIN{RS=""} NF{printf "%s%c", $0, 0}')
+  mapfile -d '' -t TASKS < <(echo "$INPUT" | awk 'BEGIN{RS="\n\n\n+"} NF{printf "%s%c", $0, 0}')
 
   # Filter out any empty tasks
   FILTERED=()

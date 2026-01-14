@@ -66,7 +66,7 @@ echo "Explain how the authentication system works" | claude-conductor -f -
 
 ### Multiline Tasks
 
-Tasks are separated by blank lines, allowing multiline prompts:
+Tasks are separated by TWO blank lines, allowing multiline prompts with formatting:
 
 ```bash
 cat > tasks.txt <<EOF
@@ -75,10 +75,12 @@ Review the authentication system:
 - Ensure proper error handling
 - Verify token expiration logic
 
+
 Run the complete test suite and:
 1. Fix any failing tests
 2. Add tests for edge cases
 3. Update test documentation
+
 
 Update the API documentation to include:
 - New endpoints added in v2.0
@@ -88,6 +90,8 @@ EOF
 
 claude-conductor -f tasks.txt
 ```
+
+Note: Single blank lines within a task are preserved, TWO+ blank lines separate tasks.
 
 Works great with clipboard (pbpaste/xclip):
 
@@ -111,7 +115,7 @@ Each task runs in `~/.conductor-work/task-N/` with an isolated git worktree.
 ## Options
 
 ```
--f FILE    Read tasks from file (blank-line delimited, or - for stdin)
+-f FILE    Read tasks from file (double-blank-line delimited, or - for stdin)
 -n NAME    Session name (default: conductor)
 -w         Use git worktrees (isolate changes per task)
 -d DIR     Work directory for worktrees (default: ~/.conductor-work)
@@ -120,7 +124,7 @@ Each task runs in `~/.conductor-work/task-N/` with an isolated git worktree.
 
 **Task Input Formats:**
 - Command line: Each argument is a separate task
-- File/stdin with `-f`: Tasks separated by blank lines (enables multiline prompts)
+- File/stdin with `-f`: Tasks separated by TWO+ blank lines (single blanks preserved within tasks)
 
 ## Examples
 
