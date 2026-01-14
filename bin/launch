@@ -18,16 +18,22 @@ Usage: $(basename "$0") [options] "task1" "task2" ...
 Launch N Claude CLI sessions in tmux, one per task.
 
 Options:
-  -f FILE         Read tasks from file (one per line)
+  -f FILE         Read tasks from file (double-blank-line delimited)
   -n NAME         Session name (default: conductor)
   -w              Use git worktrees (isolate changes per task)
   -d DIR          Work directory for worktrees (default: ~/.conductor-work)
   -h              Show this help
 
+Task Input:
+  - Command line args: each argument is a task
+  - File (-f): tasks separated by TWO+ blank lines (allows multiline with single blanks)
+  - Stdin (-f -): tasks separated by TWO+ blank lines
+
 Examples:
   launch "Review auth.py" "Run tests" "Fix bug #123"
   launch -f tasks.txt -w
   echo "Review all .go files" | launch -f -
+  pbpaste | launch -f -
 EOF
   exit 0
 }
@@ -46,11 +52,28 @@ shift $((OPTIND - 1))
 
 # Load tasks from file or args
 if [ -n "${TASK_FILE:-}" ]; then
+  # Read entire input
   if [ "$TASK_FILE" = "-" ]; then
-    mapfile -t TASKS
+    INPUT=$(cat)
   else
-    mapfile -t TASKS < "$TASK_FILE"
+    INPUT=$(cat "$TASK_FILE")
   fi
+
+  # Split by double-newlines (two+ blank lines) using awk
+  # This allows single blank lines within a task
+  # Output null-delimited for safe parsing (handles multiline tasks)
+  mapfile -d '' -t TASKS < <(echo "$INPUT" | awk 'BEGIN{RS="\n\n\n+"} NF{printf "%s%c", $0, 0}')
+
+  # Filter out any empty tasks
+  FILTERED=()
+  for task in "${TASKS[@]}"; do
+    # Trim leading/trailing whitespace and check if non-empty
+    trimmed=$(echo "$task" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+    if [ -n "$trimmed" ]; then
+      FILTERED+=("$trimmed")
+    fi
+  done
+  TASKS=("${FILTERED[@]}")
 else
   TASKS=("$@")
 fi
@@ -97,6 +120,14 @@ done
 # Layout panes
 tmux select-layout -t "$SESSION_NAME:0" tiled
 
+# Create temp directory for task files
+TASK_DIR=$(mktemp -d -t conductor-tasks-XXXXXX)
+
+# Write each task to a temp file (handles multiline, special chars)
+for i in "${!TASKS[@]}"; do
+  printf '%s' "${TASKS[$i]}" > "$TASK_DIR/task-$i"
+done
+
 # Start tasks in each pane
 for i in "${!TASKS[@]}"; do
   PANE="$SESSION_NAME:0.$i"
@@ -106,8 +137,8 @@ for i in "${!TASKS[@]}"; do
     tmux send-keys -t "$PANE" "cd '$WDIR'" C-m
   fi
 
-  # Pipe task to claude
-  tmux send-keys -t "$PANE" "echo '${TASKS[$i]}' | claude" C-m
+  # Pipe task from file to claude (handles multiline and special characters)
+  tmux send-keys -t "$PANE" "claude < '$TASK_DIR/task-$i'" C-m
 done
 
 echo "✓ Session '$SESSION_NAME' created"
