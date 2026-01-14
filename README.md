@@ -64,6 +64,37 @@ claude-conductor -f tasks.txt
 echo "Explain how the authentication system works" | claude-conductor -f -
 ```
 
+### Multiline Tasks
+
+Tasks are separated by blank lines, allowing multiline prompts:
+
+```bash
+cat > tasks.txt <<EOF
+Review the authentication system:
+- Check for security vulnerabilities
+- Ensure proper error handling
+- Verify token expiration logic
+
+Run the complete test suite and:
+1. Fix any failing tests
+2. Add tests for edge cases
+3. Update test documentation
+
+Update the API documentation to include:
+- New endpoints added in v2.0
+- Authentication requirements
+- Rate limiting details
+EOF
+
+claude-conductor -f tasks.txt
+```
+
+Works great with clipboard (pbpaste/xclip):
+
+```bash
+pbpaste | claude-conductor -f -
+```
+
 ### With Git Worktrees
 
 Isolate changes from each task in separate worktrees:
@@ -80,12 +111,16 @@ Each task runs in `~/.conductor-work/task-N/` with an isolated git worktree.
 ## Options
 
 ```
--f FILE    Read tasks from file (one per line, or - for stdin)
+-f FILE    Read tasks from file (blank-line delimited, or - for stdin)
 -n NAME    Session name (default: conductor)
 -w         Use git worktrees (isolate changes per task)
 -d DIR     Work directory for worktrees (default: ~/.conductor-work)
 -h         Show help
 ```
+
+**Task Input Formats:**
+- Command line: Each argument is a separate task
+- File/stdin with `-f`: Tasks separated by blank lines (enables multiline prompts)
 
 ## Examples
 
