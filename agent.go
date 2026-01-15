@@ -48,6 +48,21 @@ func (m *Manager) Spawn(sess *Session) error {
 			m.mu.Unlock()
 		}()
 
+		// Change to worktree directory if specified
+		var originalDir string
+		if sess.WorktreePath != "" {
+			originalDir, _ = os.Getwd()
+			if err := os.Chdir(sess.WorktreePath); err != nil {
+				fmt.Fprintf(outFile, "Warning: failed to change to worktree directory: %v\n", err)
+			} else {
+				defer func() {
+					if originalDir != "" {
+						os.Chdir(originalDir)
+					}
+				}()
+			}
+		}
+
 		err := claudecode.WithClient(ctx, func(client claudecode.Client) error {
 			if err := client.QueryWithSession(ctx, sess.Prompt, sess.ID); err != nil {
 				return err
