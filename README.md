@@ -28,7 +28,7 @@ mv conductor ~/.local/bin/
 
 ## Usage
 
-### Spawn Parallel Tasks
+### Spawn Parallel Sessions
 
 ```bash
 conductor "Review auth.py" "Run all tests" "Check for TODOs"
@@ -39,7 +39,7 @@ This spawns 3 background Claude sessions and opens the TUI.
 ### From File
 
 ```bash
-cat > tasks.txt <<EOF
+cat > prompts.txt <<EOF
 Review all Python files for security issues
 
 
@@ -49,10 +49,10 @@ Run the test suite and fix any failures
 Update documentation for new API endpoints
 EOF
 
-conductor -f tasks.txt
+conductor -f prompts.txt
 ```
 
-Tasks separated by 3+ newlines.
+Prompts separated by 3+ newlines.
 
 ### View Active Sessions
 
@@ -99,7 +99,7 @@ No tmux. No daemons. Pure Go and Claude SDK.
 ## Options
 
 ```
--f FILE    Read tasks from file (- for stdin)
+-f FILE    Read prompts from file (- for stdin)
 -h         Show help
 ```
 

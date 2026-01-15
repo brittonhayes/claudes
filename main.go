@@ -17,8 +17,8 @@ import (
 
 func main() {
 	var (
-		taskFile = flag.String("f", "", "read tasks from file (- for stdin)")
-		help     = flag.Bool("h", false, "show help")
+		file = flag.String("f", "", "read prompts from file (- for stdin)")
+		help = flag.Bool("h", false, "show help")
 	)
 	flag.Parse()
 
@@ -27,13 +27,13 @@ func main() {
 		return
 	}
 
-	tasks, err := parseTasks(*taskFile, flag.Args())
+	prompts, err := parsePrompts(*file, flag.Args())
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
 
-	if len(tasks) == 0 {
+	if len(prompts) == 0 {
 		if err := runTUI(); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
@@ -41,7 +41,7 @@ func main() {
 		return
 	}
 
-	if err := spawnTasks(tasks); err != nil {
+	if err := spawn(prompts); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
@@ -56,16 +56,16 @@ func usage() {
 	fmt.Println(`conductor - manage multiple Claude sessions
 
 Usage:
-  conductor [options] "task1" "task2" "task3"
-  conductor -f tasks.txt
+  conductor [options] "prompt1" "prompt2" "prompt3"
+  conductor -f prompts.txt
   conductor (starts TUI for existing sessions)
 
 Options:
-  -f FILE    Read tasks from file (- for stdin)
+  -f FILE    Read prompts from file (- for stdin)
   -h         Show help`)
 }
 
-func parseTasks(file string, args []string) ([]string, error) {
+func parsePrompts(file string, args []string) ([]string, error) {
 	if file != "" {
 		var r io.Reader
 		if file == "-" {
@@ -87,7 +87,7 @@ func parseTasks(file string, args []string) ([]string, error) {
 	return args, nil
 }
 
-func spawnTasks(tasks []string) error {
+func spawn(prompts []string) error {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return err
@@ -107,15 +107,15 @@ func spawnTasks(tasks []string) error {
 		return err
 	}
 
-	for _, task := range tasks {
-		task = strings.TrimSpace(task)
-		if task == "" {
+	for _, prompt := range prompts {
+		prompt = strings.TrimSpace(prompt)
+		if prompt == "" {
 			continue
 		}
 
 		sess := &Session{
 			ID:      genID(),
-			Task:    task,
+			Prompt:  prompt,
 			Status:  Running,
 			Started: time.Now(),
 		}
@@ -128,7 +128,7 @@ func spawnTasks(tasks []string) error {
 			return err
 		}
 
-		fmt.Printf("Started: %s (%s)\n", truncate(task, 50), sess.ID)
+		fmt.Printf("Started: %s (%s)\n", truncate(prompt, 50), sess.ID)
 	}
 
 	return nil
@@ -168,7 +168,7 @@ func runTUI() error {
 		}
 
 		sess := model.Attach()
-		fmt.Printf("\nAttaching to: %s\n", sess.Task)
+		fmt.Printf("\nAttaching to: %s\n", sess.Prompt)
 		fmt.Print("Follow-up: ")
 
 		var followup string

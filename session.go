@@ -16,12 +16,12 @@ const (
 )
 
 type Session struct {
-	ID          string    `json:"id"`
-	Task        string    `json:"task"`
-	Status      Status    `json:"status"`
-	OutputFile  string    `json:"output_file"`
-	Started     time.Time `json:"started"`
-	AgentID     string    `json:"agent_id,omitempty"`
+	ID         string    `json:"id"`
+	Prompt     string    `json:"prompt"`
+	Status     Status    `json:"status"`
+	OutputFile string    `json:"output_file"`
+	Started    time.Time `json:"started"`
+	AgentID    string    `json:"agent_id,omitempty"`
 }
 
 type Store struct {

@@ -49,7 +49,7 @@ func (m *Manager) Spawn(sess *Session) error {
 		}()
 
 		err := claudecode.WithClient(ctx, func(client claudecode.Client) error {
-			if err := client.QueryWithSession(ctx, sess.Task, sess.ID); err != nil {
+			if err := client.QueryWithSession(ctx, sess.Prompt, sess.ID); err != nil {
 				return err
 			}
 

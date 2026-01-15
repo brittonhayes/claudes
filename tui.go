@@ -117,7 +117,7 @@ func (m Model) View() string {
 		}
 
 		b.WriteString(fmt.Sprintf("%s %d  %-20s  %-10s  %8s  %s\n",
-			cursor, i, truncate(sess.Task, 20), sess.Status, elapsed, preview))
+			cursor, i, truncate(sess.Prompt, 20), sess.Status, elapsed, preview))
 	}
 
 	b.WriteString("\n[↑↓] navigate  [enter] attach  [d] delete  [r] refresh  [q] quit\n")
