@@ -16,12 +16,15 @@ const (
 )
 
 type Session struct {
-	ID         string    `json:"id"`
-	Prompt     string    `json:"prompt"`
-	Status     Status    `json:"status"`
-	OutputFile string    `json:"output_file"`
-	Started    time.Time `json:"started"`
-	AgentID    string    `json:"agent_id,omitempty"`
+	ID            string    `json:"id"`
+	Prompt        string    `json:"prompt"`
+	Status        Status    `json:"status"`
+	OutputFile    string    `json:"output_file"`
+	Started       time.Time `json:"started"`
+	AgentID       string    `json:"agent_id,omitempty"`
+	WorktreePath  string    `json:"worktree_path,omitempty"`
+	WorktreeName  string    `json:"worktree_name,omitempty"`
+	BranchName    string    `json:"branch_name,omitempty"`
 }
 
 type Store struct {
@@ -78,6 +81,13 @@ func (s *Store) List() ([]*Session, error) {
 }
 
 func (s *Store) Delete(id string) error {
+	// Load session to check for worktree
+	sess, err := s.Load(id)
+	if err == nil && sess.WorktreePath != "" {
+		// Try to remove the worktree, but don't fail if it errors
+		removeWorktree(sess.WorktreePath)
+	}
+
 	path := filepath.Join(s.dir, id+".json")
 	return os.Remove(path)
 }

@@ -17,8 +17,10 @@ import (
 
 func main() {
 	var (
-		file = flag.String("f", "", "read prompts from file (- for stdin)")
-		help = flag.Bool("h", false, "show help")
+		file       = flag.String("f", "", "read prompts from file (- for stdin)")
+		help       = flag.Bool("h", false, "show help")
+		useWorktree = flag.Bool("w", false, "create git worktrees for each session")
+		worktreeDir = flag.String("d", "", "directory for worktrees (default: ~/.conductor-work)")
 	)
 	flag.Parse()
 
@@ -41,7 +43,7 @@ func main() {
 		return
 	}
 
-	if err := spawn(prompts); err != nil {
+	if err := spawn(prompts, *useWorktree, *worktreeDir); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
@@ -62,6 +64,8 @@ Usage:
 
 Options:
   -f FILE    Read prompts from file (- for stdin)
+  -w         Create git worktrees for each session
+  -d DIR     Directory for worktrees (default: ~/.conductor-work)
   -h         Show help`)
 }
 
@@ -87,7 +91,7 @@ func parsePrompts(file string, args []string) ([]string, error) {
 	return args, nil
 }
 
-func spawn(prompts []string) error {
+func spawn(prompts []string, useWorktree bool, worktreeDir string) error {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return err
@@ -96,6 +100,11 @@ func spawn(prompts []string) error {
 	baseDir := filepath.Join(home, ".conductor")
 	sessionDir := filepath.Join(baseDir, "sessions")
 	outputDir := filepath.Join(baseDir, "outputs")
+
+	// Set default worktree directory
+	if worktreeDir == "" {
+		worktreeDir = filepath.Join(home, ".conductor-work")
+	}
 
 	store, err := NewStore(sessionDir)
 	if err != nil {
@@ -118,6 +127,28 @@ func spawn(prompts []string) error {
 			Prompt:  prompt,
 			Status:  Running,
 			Started: time.Now(),
+		}
+
+		// Generate worktree name and create worktree if enabled
+		if useWorktree {
+			ctx := context.Background()
+			worktreeName, err := generateWorktreeName(ctx, prompt, sess.ID)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to generate worktree name: %v\n", err)
+				// Continue without worktree on error
+			} else {
+				// Create the worktree
+				info, err := createWorktree(worktreeDir, worktreeName, worktreeName)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: failed to create worktree: %v\n", err)
+					// Continue without worktree on error
+				} else {
+					sess.WorktreePath = info.Path
+					sess.WorktreeName = info.Name
+					sess.BranchName = info.Branch
+					fmt.Printf("Created worktree: %s (branch: %s)\n", info.Path, info.Branch)
+				}
+			}
 		}
 
 		if err := mgr.Spawn(sess); err != nil {

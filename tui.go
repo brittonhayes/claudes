@@ -116,8 +116,14 @@ func (m Model) View() string {
 			preview = preview[:50] + "..."
 		}
 
-		b.WriteString(fmt.Sprintf("%s %d  %-20s  %-10s  %8s  %s\n",
-			cursor, i, truncate(sess.Prompt, 20), sess.Status, elapsed, preview))
+		// Add branch info if worktree is used
+		branchInfo := ""
+		if sess.BranchName != "" {
+			branchInfo = fmt.Sprintf(" [%s]", truncate(sess.BranchName, 30))
+		}
+
+		b.WriteString(fmt.Sprintf("%s %d  %-20s  %-10s  %8s%s  %s\n",
+			cursor, i, truncate(sess.Prompt, 20), sess.Status, elapsed, branchInfo, preview))
 	}
 
 	b.WriteString("\n[↑↓] navigate  [enter] attach  [d] delete  [r] refresh  [q] quit\n")
